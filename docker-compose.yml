@@ -1,0 +1,114 @@
+# docker-compose.yml — Content Hunter
+#
+# Run everything with:
+#   docker compose up --build
+#
+# To switch from SQLite to PostgreSQL:
+#   1. Uncomment the `db` service below
+#   2. In the `backend` service environment, change DATABASE_URL to:
+#      DATABASE_URL=postgresql://postgres:postgres@db:5432/content_hunter
+#   3. Run `docker compose up --build`
+
+version: "3.9"
+
+services:
+  # ─────────────────────────────────────────────────────────────────
+  # Backend — FastAPI
+  # ─────────────────────────────────────────────────────────────────
+  backend:
+    build: ./backend
+    ports:
+      - "8000:8000"
+    environment:
+      # SQLite (default — no external DB needed)
+      - DATABASE_URL=sqlite:///./content_hunter.db
+      # Swap ↑ with the line below when using PostgreSQL (enable `db` service)
+      # - DATABASE_URL=postgresql://postgres:postgres@db:5432/content_hunter
+      - OLLAMA_BASE_URL=http://host.docker.internal:11434
+      - OLLAMA_MODEL=llama3
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - FRONTEND_URL=http://localhost:5173
+    volumes:
+      # Persist SQLite DB file
+      - backend_data:/app/content_hunter.db
+    depends_on:
+      - redis
+    # depends_on:
+    #   - db
+    #   - redis
+    restart: unless-stopped
+
+  # ─────────────────────────────────────────────────────────────────
+  # Frontend — React (served via Nginx in production)
+  # ─────────────────────────────────────────────────────────────────
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    ports:
+      - "5173:80"
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+  # ─────────────────────────────────────────────────────────────────
+  # Celery worker
+  # ─────────────────────────────────────────────────────────────────
+  worker:
+    build: ./backend
+    command: celery -A app.scheduler worker --loglevel=info
+    environment:
+      - DATABASE_URL=sqlite:///./content_hunter.db
+      # - DATABASE_URL=postgresql://postgres:postgres@db:5432/content_hunter
+      - OLLAMA_BASE_URL=http://host.docker.internal:11434
+      - OLLAMA_MODEL=llama3
+      - CELERY_BROKER_URL=redis://redis:6379/0
+    volumes:
+      - backend_data:/app/content_hunter.db
+    depends_on:
+      - redis
+    # depends_on:
+    #   - db
+    #   - redis
+    restart: unless-stopped
+
+  # ─────────────────────────────────────────────────────────────────
+  # Celery beat — task scheduler
+  # ─────────────────────────────────────────────────────────────────
+  beat:
+    build: ./backend
+    command: celery -A app.scheduler beat --loglevel=info
+    environment:
+      - DATABASE_URL=sqlite:///./content_hunter.db
+      - CELERY_BROKER_URL=redis://redis:6379/0
+    depends_on:
+      - redis
+    restart: unless-stopped
+
+  # ─────────────────────────────────────────────────────────────────
+  # Redis — Celery message broker
+  # ─────────────────────────────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    restart: unless-stopped
+
+  # ─────────────────────────────────────────────────────────────────
+  # PostgreSQL — Uncomment when ready to migrate from SQLite
+  # ─────────────────────────────────────────────────────────────────
+  # db:
+  #   image: postgres:16-alpine
+  #   environment:
+  #     POSTGRES_USER: postgres
+  #     POSTGRES_PASSWORD: postgres
+  #     POSTGRES_DB: content_hunter
+  #   volumes:
+  #     - postgres_data:/var/lib/postgresql/data
+  #   ports:
+  #     - "5432:5432"
+  #   restart: unless-stopped
+
+volumes:
+  backend_data:
+  # postgres_data:   # Uncomment when enabling PostgreSQL
