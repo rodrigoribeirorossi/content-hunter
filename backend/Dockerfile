@@ -21,7 +21,7 @@ RUN apt-get update && apt-get install -y \
     libpango-1.0-0 \
     libpangocairo-1.0-0 \
     fonts-unifont \
-    && (apt-get install -y fonts-ubuntu || apt-get install -y fonts-ubuntu-title) \
+    && if apt-cache policy fonts-ubuntu | grep -q "Candidate: (none)"; then apt-get install -y fonts-ubuntu-title; else apt-get install -y fonts-ubuntu; fi \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt .
